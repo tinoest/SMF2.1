@@ -2595,7 +2595,6 @@ CREATE INDEX {$db_prefix}messages_likes ON {$db_prefix}messages (likes DESC);
 UPDATE {$db_prefix}smileys
 SET filename = REPLACE(filename, '.gif', '')
 WHERE
-	code IN (':)',';)',':D',';D','>:(',':(',':o','8)','???','::)',':P',':-[',':-X',':-\\',':-*',':''(','>:D','^-^','O0',':))','C:-)','O:-)') AND
 	filename LIKE '%.gif';
 ---#
 
@@ -2603,7 +2602,6 @@ WHERE
 UPDATE {$db_prefix}smileys
 SET filename = REPLACE(filename, '.png', '')
 WHERE
-	code IN (':)',';)',':D',';D','>:(',':(',':o','8)','???','::)',':P',':-[',':-X',':-\\',':-*',':''(','>:D','^-^','O0',':))','C:-)','O:-)') AND
 	filename LIKE '%.png';
 ---#
 
@@ -3235,4 +3233,12 @@ VALUES ('Independence Day', '1004-07-04'),
 	('Labor Day', '2029-09-03'),
 	('Labor Day', '2030-09-02'),
 	('D-Day', '1004-06-06');
+---#
+
+/******************************************************************************/
+--- Add Attachments index
+/******************************************************************************/
+---# Create new index on Attachments
+DROP INDEX IF EXISTS {$db_prefix}attachments_id_thumb;
+CREATE INDEX {$db_prefix}attachments_id_thumb ON {$db_prefix}attachments (id_thumb);
 ---#

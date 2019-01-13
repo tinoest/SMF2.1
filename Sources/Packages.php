@@ -7,7 +7,7 @@
  *
  * @package SMF
  * @author Simple Machines http://www.simplemachines.org
- * @copyright 2018 Simple Machines and individual contributors
+ * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
  * @version 2.1 RC1
@@ -1517,6 +1517,8 @@ function PackageBrowse()
 
 	// Current SMF version, which is selected by default
 	$context['default_version'] = preg_replace('~^SMF ~', '', $forum_version);
+
+	$context['emulation_versions'][] = $context['default_version'];
 
 	// Version we're currently emulating, if any
 	$context['selected_version'] = preg_replace('~^SMF ~', '', $context['forum_version']);

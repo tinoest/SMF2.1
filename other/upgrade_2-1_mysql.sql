@@ -2546,7 +2546,6 @@ DROP INDEX id_board;
 UPDATE {$db_prefix}smileys
 SET filename = REPLACE(filename, '.gif', '')
 WHERE
-	code IN (':)',';)',':D',';D','>:(',':(',':o','8)','???','::)',':P',':-[',':-X',':-\\',':-*',':''(','>:D','^-^','O0',':))','C:-)','O:-)') AND
 	filename LIKE '%.gif';
 ---#
 
@@ -2554,7 +2553,6 @@ WHERE
 UPDATE {$db_prefix}smileys
 SET filename = REPLACE(filename, '.png', '')
 WHERE
-	code IN (':)',';)',':D',';D','>:(',':(',':o','8)','???','::)',':P',':-[',':-X',':-\\',':-*',':''(','>:D','^-^','O0',':))','C:-)','O:-)') AND
 	filename LIKE '%.png';
 ---#
 
@@ -2914,3 +2912,11 @@ VALUES ('Independence Day', '1004-07-04'),
 	('Labor Day', '2030-09-02'),
 	('D-Day', '1004-06-06');
 ---#
+
+/******************************************************************************/
+--- Add Attachments index
+/******************************************************************************/
+---# Create new index on Attachments
+CREATE INDEX idx_id_thumb ON {$db_prefix}attachments (id_thumb);
+---#
+
