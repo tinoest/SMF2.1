@@ -1048,7 +1048,7 @@ function Post($post_errors = array())
 					$context['files_in_session_warning'] = $txt['attached_files_in_session'];
 
 				$context['current_attachments'][$attachID] = array(
-					'name' => '<u>' . $smcFunc['htmlspecialchars']($attachment['name']) . '</u>',
+					'name' => $smcFunc['htmlspecialchars']($attachment['name']),
 					'size' => $attachment['size'],
 					'attachID' => $attachID,
 					'unchecked' => false,
@@ -2746,8 +2746,6 @@ function QuoteFast()
 
 		// Censor the message!
 		censorText($row['body']);
-
-		$row['body'] = preg_replace('~<br ?/?' . '>~i', "\n", $row['body']);
 
 		// Want to modify a single message by double clicking it?
 		if (isset($_REQUEST['modify']))

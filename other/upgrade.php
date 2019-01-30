@@ -13,8 +13,10 @@
 
 // Version information...
 define('SMF_VERSION', '2.1 RC1');
+define('SMF_FULL_VERSION', 'SMF ' . SMF_VERSION);
 define('SMF_LANG_VERSION', '2.1 RC1');
 define('SMF_SOFTWARE_YEAR', '2019');
+define('SMF_INSTALLING', 1);
 
 /**
  * The minimum required PHP version.
@@ -1572,7 +1574,7 @@ function DatabaseChanges()
 // Delete the damn thing!
 function DeleteUpgrade()
 {
-	global $command_line, $language, $upcontext, $sourcedir, $forum_version;
+	global $command_line, $language, $upcontext, $sourcedir;
 	global $user_info, $maintenance, $smcFunc, $db_type, $txt, $settings;
 
 	// Now it's nice to have some of the basic SMF source files.
@@ -1620,7 +1622,6 @@ function DeleteUpgrade()
 	else
 	{
 		require_once($sourcedir . '/ScheduledTasks.php');
-		$forum_version = SMF_VERSION; // The variable is usually defined in index.php so lets just use the constant to do it for us.
 		scheduled_fetchSMfiles(); // Now go get those files!
 		// This is needed in case someone invokes the upgrader using https when upgrading an http forum
 		if (httpsOn())
@@ -1640,7 +1641,7 @@ function DeleteUpgrade()
 		),
 		array(
 			time(), 3, $user_info['id'], $command_line ? '127.0.0.1' : $user_info['ip'], 'upgrade',
-			0, 0, 0, json_encode(array('version' => $forum_version, 'member' => $user_info['id'])),
+			0, 0, 0, json_encode(array('version' => SMF_FULL_VERSION, 'member' => $user_info['id'])),
 		),
 		array('id_action')
 	);
@@ -1666,7 +1667,7 @@ function DeleteUpgrade()
 // Just like the built in one, but setup for CLI to not use themes.
 function cli_scheduled_fetchSMfiles()
 {
-	global $sourcedir, $language, $forum_version, $modSettings, $smcFunc;
+	global $sourcedir, $language, $modSettings, $smcFunc;
 
 	if (empty($modSettings['time_format']))
 		$modSettings['time_format'] = '%B %d, %Y, %I:%M:%S %p';
@@ -1685,7 +1686,7 @@ function cli_scheduled_fetchSMfiles()
 		$js_files[$row['id_file']] = array(
 			'filename' => $row['filename'],
 			'path' => $row['path'],
-			'parameters' => sprintf($row['parameters'], $language, urlencode($modSettings['time_format']), urlencode($forum_version)),
+			'parameters' => sprintf($row['parameters'], $language, urlencode($modSettings['time_format']), urlencode(SMF_FULL_VERSION)),
 		);
 	}
 	$smcFunc['db_free_result']($request);
@@ -3389,7 +3390,8 @@ function serialize_to_json()
 								{
 									echo "\nFailed to unserialize " . $row[$col] . "... Skipping\n";
 								}
-								else
+								// If unserialize failed, it's better to leave the data alone than to overwrite it with an empty JSON value
+								elseif ($temp !== false)
 								{
 									$row[$col] = json_encode($temp);
 
@@ -3616,9 +3618,9 @@ function template_upgrade_above()
 	<meta charset="', isset($txt['lang_character_set']) ? $txt['lang_character_set'] : 'UTF-8', '">
 	<meta name="robots" content="noindex">
 	<title>', $txt['upgrade_upgrade_utility'], '</title>
-	<link rel="stylesheet" href="', $settings['default_theme_url'], '/css/index.css?alp21">
-	<link rel="stylesheet" href="', $settings['default_theme_url'], '/css/install.css?alp21">
-	', $txt['lang_rtl'] == true ? '<link rel="stylesheet" href="' . $settings['default_theme_url'] . '/css/rtl.css?alp21">' : '', '
+	<link rel="stylesheet" href="', $settings['default_theme_url'], '/css/index.css">
+	<link rel="stylesheet" href="', $settings['default_theme_url'], '/css/install.css">
+	', $txt['lang_rtl'] == true ? '<link rel="stylesheet" href="' . $settings['default_theme_url'] . '/css/rtl.css">' : '', '
 	<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
 	<script src="', $settings['default_theme_url'], '/scripts/script.js"></script>
 	<script>
@@ -3897,7 +3899,7 @@ function template_welcome_message()
 	echo '
 					<strong>', $txt['upgrade_admin_login'], ' ', $disable_security ? '(DISABLED)' : '', '</strong>
 					<h3>', $txt['upgrade_sec_login'], '</h3>
-					<dl class="settings">
+					<dl class="settings adminlogin">
 						<dt>
 							<label for="user"', $disable_security ? ' disabled' : '', '>', $txt['upgrade_username'], '</label>
 						</dt>

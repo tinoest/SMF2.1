@@ -30,6 +30,8 @@ function preparsecode(&$message, $previewing = false)
 {
 	global $user_info, $modSettings, $context, $sourcedir;
 
+	static $tags_regex, $legacy_bbc_regex;
+
 	// This line makes all languages *theoretically* work even with the wrong charset ;).
 	if (empty($context['utf8']))
 		$message = preg_replace('~&amp;#(\d{4,5}|[2-9]\d{2,4}|1[2-9]\d);~', '&#$1;', $message);
@@ -51,6 +53,9 @@ function preparsecode(&$message, $previewing = false)
 		$message = substr($message, 0, -7);
 	while (substr($message, 0, 8) == '[/quote]')
 		$message = substr($message, 8);
+
+	if (strpos($message, '[cowsay') !== false && !allowedTo('bbc_cowsay'))
+		$message = preg_replace('~\[(/?)cowsay[^\]]*\]~iu', '[$1pre]', $message);
 
 	// Find all code blocks, work out whether we'd be parsing them, then ensure they are all closed.
 	$in_tag = false;
@@ -116,7 +121,8 @@ function preparsecode(&$message, $previewing = false)
 	if (!$previewing && strpos($message, '[html]') !== false)
 	{
 		if (allowedTo('admin_forum'))
-			$message = preg_replace_callback('~\[html\](.+?)\[/html\]~is', function($m) {
+			$message = preg_replace_callback('~\[html\](.+?)\[/html\]~is', function($m)
+			{
 				return '[html]' . strtr(un_htmlspecialchars($m[1]), array("\n" => '&#13;', '  ' => ' &#32;', '[' => '&#91;', ']' => '&#93;')) . '[/html]';
 			}, $message);
 
@@ -139,10 +145,11 @@ function preparsecode(&$message, $previewing = false)
 	$message = preg_replace('~\[/(black|blue|green|red|white)\]~', '[/color]', $message); // And now do the closing tags
 
 	// Legacy BBC are only retained for historical reasons. They're not for use in new posts.
-	$message = preg_replace('~\[(/?)(\b' . implode("\b|\b", array_unique($context['legacy_bbc'])) . '\b)([^\]]*)\]~i', '&#91;$1$2$3&#93;', $message);
+	$legacy_bbc_regex = empty($legacy_bbc_regex) ? build_regex(array_unique($context['legacy_bbc']), '~') : $legacy_bbc_regex;
+	$message = preg_replace('~\[(/?)(' . $legacy_bbc_regex . ')\b([^\]]*)\]~i', '&#91;$1$2$3&#93;', $message);
 
 	// Make sure all tags are lowercase.
-	$message = preg_replace_callback('~\[([/]?)(list|li|table|tr|td)((\s[^\]]+)*)\]~i', function($m)
+	$message = preg_replace_callback('~\[(/?)(list|li|table|tr|td)\b([^\]]*)\]~i', function($m)
 	{
 		return "[$m[1]" . strtolower("$m[2]") . "$m[3]]";
 	}, $message);
@@ -205,22 +212,21 @@ function preparsecode(&$message, $previewing = false)
 		$message = preg_replace(array_keys($mistake_fixes), $mistake_fixes, $message);
 
 	// Remove empty bbc from the sections outside the code tags
-	$allowedEmpty = array(
-		'anchor',
-		'td',
-	);
+	if (empty($tags_regex))
+	{
+		require_once($sourcedir . '/Subs.php');
 
-	require_once($sourcedir . '/Subs.php');
+		$allowed_empty = array('anchor', 'td',);
 
-	$alltags = array();
-	foreach (($codes = parse_bbc(false)) as $code)
-		if (!in_array($code['tag'], $allowedEmpty))
-			$alltags[] = $code['tag'];
+		$tags = array();
+		foreach (($codes = parse_bbc(false)) as $code)
+			if (!in_array($code['tag'], $allowed_empty))
+				$tags[] = $code['tag'];
 
-	$alltags_regex = '\b' . implode("\b|\b", array_unique($alltags)) . '\b';
-
-	while (preg_match('~\[(' . $alltags_regex . ')[^\]]*\]\s*\[/\1\]\s?~i', $message))
-		$message = preg_replace('~\[(' . $alltags_regex . ')[^\]]*\]\s*\[/\1\]\s?~i', '', $message);
+		$tags_regex = build_regex($tags, '~');
+	}
+	while (preg_match('~\[(' . $tags_regex . ')\b[^\]]*\]\s*\[/\1\]\s?~i', $message))
+		$message = preg_replace('~\[(' . $tags_regex . ')[^\]]*\]\s*\[/\1\]\s?~i', '', $message);
 
 	// Restore code blocks
 	if (!empty($code_tags))
@@ -267,6 +273,9 @@ function un_preparsecode($message)
 		return "[html]" . strtr($smcFunc['htmlspecialchars']("$m[1]", ENT_QUOTES), array("\\&quot;" => "&quot;", "&amp;#13;" => "<br>", "&amp;#32;" => " ", "&amp;#91;" => "[", "&amp;#93;" => "]")) . "[/html]";
 	}, $message);
 
+	if (strpos($message, '[cowsay') !== false && !allowedTo('bbc_cowsay'))
+		$message = preg_replace('~\[(/?)cowsay[^\]]*\]~iu', '[$1pre]', $message);
+
 	// Attempt to un-parse the time to something less awful.
 	$message = preg_replace_callback('~\[time\](\d{0,10})\[/time\]~i', function($m)
 	{
@@ -274,10 +283,10 @@ function un_preparsecode($message)
 	}, $message);
 
 	if (!empty($code_tags))
-		$message = str_replace(array_keys($code_tags), array_values($code_tags), $message);
+		$message = strtr($message, $code_tags);
 
 	// Change breaks back to \n's and &nsbp; back to spaces.
-	return preg_replace('~<br( /)?' . '>~', "\n", str_replace('&nbsp;', ' ', $message));
+	return preg_replace('~<br\s*/?' . '>~', "\n", str_replace('&nbsp;', ' ', $message));
 }
 
 /**
