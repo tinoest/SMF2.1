@@ -228,8 +228,8 @@ function PackageInstallTest()
 
 	$context['database_changes'] = array();
 	if (isset($packageInfo['uninstall']['database']))
-		$context['database_changes'][] = $txt['execute_database_changes'] . ' - ' . $packageInfo['uninstall']['database'];
-	elseif (!empty($db_changes))
+		$context['database_changes'][] = sprintf($txt['package_db_code'], $packageInfo['uninstall']['database']);
+	if (!empty($db_changes))
 	{
 		foreach ($db_changes as $change)
 		{
@@ -507,7 +507,7 @@ function PackageInstallTest()
 				'action' => $smcFunc['htmlspecialchars']($action['filename']),
 			);
 		}
-		elseif ($action['type'] == 'database')
+		elseif ($action['type'] == 'database' && !$context['uninstalling'])
 		{
 			$thisAction = array(
 				'type' => $txt['execute_database_changes'],
@@ -1050,7 +1050,7 @@ function PackageInstall()
 			{
 				$context['redirect_url'] = $action['redirect_url'];
 				$context['redirect_text'] = !empty($action['filename']) && file_exists($packagesdir . '/temp/' . $context['base_path'] . $action['filename']) ? $smcFunc['htmlspecialchars'](file_get_contents($packagesdir . '/temp/' . $context['base_path'] . $action['filename'])) : ($context['uninstalling'] ? $txt['package_uninstall_done'] : $txt['package_installed_done']);
-				$context['redirect_timeout'] = $action['redirect_timeout'];
+				$context['redirect_timeout'] = empty($action['redirect_timeout']) ? 5 : (int) ceil($action['redirect_timeout'] / 1000);
 				if (!empty($action['parse_bbc']))
 				{
 					require_once($sourcedir . '/Subs-Post.php');
