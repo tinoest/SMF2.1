@@ -11,7 +11,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -574,7 +574,8 @@ function ModifyWarningSettings($return_config = false)
 				'warning_decrement',
 				'subtext' => $txt['setting_warning_decrement_note'] . ' ' . $txt['zero_to_disable']
 			),
-			array('permissions', 'view_warning'),
+			array('permissions', 'view_warning_any'),
+			array('permissions', 'view_warning_own'),
 		);
 
 	call_integration_hook('integrate_warning_settings', array(&$config_vars));
@@ -2222,11 +2223,10 @@ function ModifyLogSettings($return_config = false)
 		array('check', 'adminlog_enabled', 'help' => 'adminlog'),
 		array('check', 'userlog_enabled', 'help' => 'userlog'),
 		// The error log is a wonderful thing.
-		array('title', 'errlog'),
+		array('title', 'errorlog'),
 		array('desc', 'error_log_desc'),
 		array('check', 'enableErrorLogging'),
 		array('check', 'enableErrorQueryLogging'),
-		array('check', 'log_ban_hits'),
 		// Even do the pruning?
 		array('title', 'pruning_title'),
 		array('desc', 'pruning_desc'),
@@ -2282,7 +2282,6 @@ function ModifyLogSettings($return_config = false)
 			array('check', 'userlog_enabled'),
 			array('check', 'enableErrorLogging'),
 			array('check', 'enableErrorQueryLogging'),
-			array('check', 'log_ban_hits'),
 			array('text', 'pruningOptions')
 		);
 

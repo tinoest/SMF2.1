@@ -10,7 +10,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  *
  * Original module by Mach8 - We'll never forget you.
  */
@@ -143,10 +143,7 @@ function SplitExecute()
 
 	// Redirect to the selector if they chose selective.
 	if ($_POST['step2'] == 'selective')
-	{
-		$_REQUEST['subname'] = $_POST['subname'];
-		return SplitSelectTopics();
-	}
+		redirectexit ('action=splittopics;sa=selectTopics;subname=' . $_POST['subname'] . ';topic=' . $topic . '.0;start2=0');
 
 	$_POST['at'] = (int) $_POST['at'];
 	$messagesToBeSplit = array();
@@ -243,7 +240,7 @@ function SplitSelectTopics()
 			WHERE id_topic = {int:current_topic}' . (empty($_SESSION['split_selection'][$topic]) ? '' : '
 				AND id_msg NOT IN ({array_int:no_split_msgs})') . (!$modSettings['postmod_active'] || allowedTo('approve_posts') ? '' : '
 				AND approved = {int:is_approved}') . '
-				' . (empty($settings['view_newest_first']) ? '' : 'ORDER BY id_msg DESC') . '
+				' . (empty($options['view_newest_first']) ? '' : 'ORDER BY id_msg DESC') . '
 				LIMIT {int:start}, {int:messages_per_page}',
 			array(
 				'current_topic' => $topic,

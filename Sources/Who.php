@@ -11,7 +11,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -273,20 +273,42 @@ function determineActions($urls, $preferred_prefix = false)
 		'ban' => array('manage_bans'),
 		'boardrecount' => array('admin_forum'),
 		'calendar' => array('calendar_view'),
+		'corefeatures' => array('admin_forum'),
 		'editnews' => array('edit_news'),
+		'featuresettings' => array('admin_forum'),
+		'languages' => array('admin_forum'),
+		'logs' => array('admin_forum'),
 		'mailing' => array('send_mail'),
+		'mailqueue' => array('admin_forum'),
 		'maintain' => array('admin_forum'),
 		'manageattachments' => array('manage_attachments'),
 		'manageboards' => array('manage_boards'),
+		'managecalendar' => array('admin_forum'),
+		'managesearch' => array('admin_forum'),
+		'managesmileys' => array('manage_smileys'),
+		'membergroups' => array('manage_membergroups'),
 		'mlist' => array('view_mlist'),
 		'moderate' => array('access_mod_center', 'moderate_forum', 'manage_membergroups'),
+		'modsettings' => array('admin_forum'),
+		'news' => array('edit_news', 'send_mail', 'admin_forum'),
 		'optimizetables' => array('admin_forum'),
+		'packages' => array('admin_forum'),
+		'paidsubscribe' => array('admin_forum'),
+		'permissions' => array('manage_permissions'),
+		'postsettings' => array('admin_forum'),
+		'regcenter' => array('admin_forum', 'moderate_forum'),
 		'repairboards' => array('admin_forum'),
+		'reports' => array('admin_forum'),
+		'scheduledtasks' => array('admin_forum'),
 		'search' => array('search_posts'),
 		'search2' => array('search_posts'),
+		'securitysettings' => array('admin_forum'),
+		'sengines' => array('admin_forum'),
+		'serversettings' => array('admin_forum'),
 		'setcensor' => array('moderate_forum'),
 		'setreserve' => array('moderate_forum'),
 		'stats' => array('view_stats'),
+		'theme' => array('admin_forum'),
 		'viewerrorlog' => array('admin_forum'),
 		'viewmembers' => array('moderate_forum'),
 	);
@@ -379,10 +401,9 @@ function determineActions($urls, $preferred_prefix = false)
 				$result = $smcFunc['db_query']('', '
 					SELECT m.id_topic, m.subject
 					FROM {db_prefix}messages AS m
-						INNER JOIN {db_prefix}boards AS b ON (b.id_board = m.id_board)
-						INNER JOIN {db_prefix}topics AS t ON (t.id_topic = m.id_topic' . ($modSettings['postmod_active'] ? ' AND t.approved = {int:is_approved}' : '') . ')
+						' . ($modSettings['postmod_active'] ? 'INNER JOIN {db_prefix}topics AS t ON (t.id_topic = m.id_topic AND t.approved = {int:is_approved})' : '') . '
 					WHERE m.id_msg = {int:id_msg}
-						AND {query_see_board}' . ($modSettings['postmod_active'] ? '
+						AND {query_see_message_board}' . ($modSettings['postmod_active'] ? '
 						AND m.approved = {int:is_approved}' : '') . '
 					LIMIT 1',
 					array(
@@ -403,7 +424,7 @@ function determineActions($urls, $preferred_prefix = false)
 			// Viewable by permission level.
 			elseif (isset($allowedActions[$actions['action']]))
 			{
-				if (allowedTo($allowedActions[$actions['action']]))
+				if (allowedTo($allowedActions[$actions['action']]) && !empty($txt['whoallow_' . $actions['action']]))
 					$data[$k] = $txt['whoallow_' . $actions['action']];
 				elseif (in_array('moderate_forum', $allowedActions[$actions['action']]))
 					$data[$k] = $txt['who_moderate'];
@@ -457,9 +478,8 @@ function determineActions($urls, $preferred_prefix = false)
 		$result = $smcFunc['db_query']('', '
 			SELECT t.id_topic, m.subject
 			FROM {db_prefix}topics AS t
-				INNER JOIN {db_prefix}boards AS b ON (b.id_board = t.id_board)
 				INNER JOIN {db_prefix}messages AS m ON (m.id_msg = t.id_first_msg)
-			WHERE {query_see_board}
+			WHERE {query_see_topic_board}
 				AND t.id_topic IN ({array_int:topic_list})' . ($modSettings['postmod_active'] ? '
 				AND t.approved = {int:is_approved}' : '') . '
 			LIMIT {int:limit}',

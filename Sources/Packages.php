@@ -10,7 +10,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -1026,6 +1026,10 @@ function PackageInstall()
 			}
 			elseif ($action['type'] == 'hook' && isset($action['hook'], $action['function']))
 			{
+				// Set the system to ignore hooks, but only if it wasn't changed before.
+				if (!isset($context['ignore_hook_errors']))
+					$context['ignore_hook_errors'] = true;
+
 				if ($action['reverse'])
 					remove_integration_function($action['hook'], $action['function'], true, $action['include_file'], $action['object']);
 				else
@@ -1096,8 +1100,8 @@ function PackageInstall()
 			{
 				$smcFunc['db_query']('', '
 					UPDATE {db_prefix}log_packages
-					SET install_state = {int:not_installed}, member_removed = {string:member_name}, id_member_removed = {int:current_member},
-						time_removed = {int:current_time}
+					SET install_state = {int:not_installed}, member_removed = {string:member_name},
+						id_member_removed = {int:current_member}, time_removed = {int:current_time}
 					WHERE package_id = {string:package_id}
 						AND id_install = {int:install_id}',
 					array(
@@ -1115,6 +1119,23 @@ function PackageInstall()
 			{
 				$is_upgrade = true;
 				$old_db_changes = empty($row['db_changes']) ? array() : $smcFunc['json_decode']($row['db_changes'], true);
+
+				// Mark the old version as uninstalled
+				$smcFunc['db_query']('', '
+					UPDATE {db_prefix}log_packages
+					SET install_state = {int:not_installed}, member_removed = {string:member_name},
+						id_member_removed = {int:current_member}, time_removed = {int:current_time}
+					WHERE package_id = {string:package_id}
+						AND version = {string:old_version}',
+					array(
+						'current_member' => $user_info['id'],
+						'not_installed' => 0,
+						'current_time' => time(),
+						'package_id' => $row['package_id'],
+						'member_name' => $user_info['name'],
+						'old_version' => $old_version,
+					)
+				);
 			}
 		}
 
@@ -1133,21 +1154,14 @@ function PackageInstall()
 			{
 				// We're really just checking for entries which are create table AND add columns (etc).
 				$tables = array();
-				/**
-				 * Table sorting function used in usort
-				 *
-				 * @param array $a
-				 * @param array $b
-				 * @return int
-				 */
-				function sort_table_first($a, $b)
+
+				usort($db_package_log, function ($a, $b)
 				{
 					if ($a[0] == $b[0])
 						return 0;
 					return $a[0] == 'remove_table' ? -1 : 1;
-				}
+				});
 
-				usort($db_package_log, 'sort_table_first');
 				foreach ($db_package_log as $k => $log)
 				{
 					if ($log[0] == 'remove_table')
@@ -1359,6 +1373,10 @@ function PackageBrowse()
 	$context['page_title'] .= ' - ' . $txt['browse_packages'];
 
 	$context['forum_version'] = SMF_FULL_VERSION;
+	$context['available_modification'] = array();
+	$context['available_avatar'] = array();
+	$context['available_language'] = array();
+	$context['available_unknown'] = array();
 	$context['modification_types'] = array('modification', 'avatar', 'language', 'unknown');
 
 	call_integration_hook('integrate_modification_types');
@@ -1492,13 +1510,6 @@ function PackageBrowse()
 	$context['sub_template'] = 'browse';
 	$context['default_list'] = 'packages_lists';
 
-	// Empty lists for now.
-	$context['available_mods'] = array();
-	$context['available_avatars'] = array();
-	$context['available_languages'] = array();
-	$context['available_other'] = array();
-	$context['available_all'] = array();
-
 	$get_versions = $smcFunc['db_query']('', '
 		SELECT data FROM {db_prefix}admin_info_files WHERE filename={string:versionsfile} AND path={string:smf}',
 		array(
@@ -1586,15 +1597,10 @@ function list_getPackages($start, $items_per_page, $sort, $params)
 		$context['installed_mods'] = array_keys($installed_mods);
 	}
 
-	if (empty($packages))
-		foreach ($context['modification_types'] as $type)
-			$packages[$type] = array();
-
 	if ($dir = @opendir($packagesdir))
 	{
 		$dirs = array();
 		$sort_id = array(
-			'mod' => 1,
 			'modification' => 1,
 			'avatar' => 1,
 			'language' => 1,
@@ -1605,14 +1611,6 @@ function list_getPackages($start, $items_per_page, $sort, $params)
 		while ($package = readdir($dir))
 		{
 			if ($package == '.' || $package == '..' || $package == 'temp' || (!(is_dir($packagesdir . '/' . $package) && file_exists($packagesdir . '/' . $package . '/package-info.xml')) && substr(strtolower($package), -7) != '.tar.gz' && substr(strtolower($package), -4) != '.tgz' && substr(strtolower($package), -4) != '.zip'))
-				continue;
-
-			$skip = false;
-			foreach ($context['modification_types'] as $type)
-				if (isset($context['available_' . $type][md5($package)]))
-					$skip = true;
-
-			if ($skip)
 				continue;
 
 			// Skip directories or files that are named the same.
@@ -1733,40 +1731,20 @@ function list_getPackages($start, $items_per_page, $sort, $params)
 					}
 				}
 
-				// Modification.
-				if ($packageInfo['type'] == 'modification' || $packageInfo['type'] == 'mod')
-				{
-					$sort_id['modification']++;
-					$sort_id['mod']++;
-					$packages['modification'][strtolower($packageInfo[$sort]) . '_' . $sort_id['mod']] = md5($package);
-					$context['available_modification'][md5($package)] = $packageInfo;
-				}
-				// Avatar package.
-				elseif ($packageInfo['type'] == 'avatar')
+				// Save some memory by not passing the xmlArray object into context.
+				unset($packageInfo['xml']);
+
+				if (isset($sort_id[$packageInfo['type']], $packages[$packageInfo['type']], $context['available_' . $packageInfo['type']]) && $params == $packageInfo['type'])
 				{
 					$sort_id[$packageInfo['type']]++;
-					$packages['avatar'][strtolower($packageInfo[$sort])] = md5($package);
-					$context['available_avatar'][md5($package)] = $packageInfo;
-				}
-				// Language package.
-				elseif ($packageInfo['type'] == 'language')
-				{
-					$sort_id[$packageInfo['type']]++;
-					$packages['language'][strtolower($packageInfo[$sort])] = md5($package);
-					$context['available_language'][md5($package)] = $packageInfo;
-				}
-				// This might be a 3rd party section.
-				elseif (isset($sort_id[$packageInfo['type']], $packages[$packageInfo['type']], $context['available_' . $packageInfo['type']]))
-				{
-					$sort_id[$packageInfo['type']]++;
-					$packages[$packageInfo['type']][strtolower($packageInfo[$sort])] = md5($package);
+					$packages[$packageInfo['type']][strtolower($packageInfo[$sort]) . '_' . $sort_id[$packageInfo['type']]] = md5($package);
 					$context['available_' . $packageInfo['type']][md5($package)] = $packageInfo;
 				}
-				// Other stuff.
-				else
+				elseif (!isset($sort_id[$packageInfo['type']], $packages[$packageInfo['type']], $context['available_' . $packageInfo['type']]) && $params == 'unknown')
 				{
+					$packageInfo['sort_id'] = $sort_id['unknown'];
 					$sort_id['unknown']++;
-					$packages['unknown'][strtolower($packageInfo[$sort])] = md5($package);
+					$packages['unknown'][strtolower($packageInfo[$sort]) . '_' . $sort_id['unknown']] = md5($package);
 					$context['available_unknown'][md5($package)] = $packageInfo;
 				}
 			}

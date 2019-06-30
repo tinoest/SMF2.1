@@ -8,14 +8,14 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 // Version information...
-define('SMF_VERSION', '2.1 RC1');
+define('SMF_VERSION', '2.1 RC2');
 define('SMF_FULL_VERSION', 'SMF ' . SMF_VERSION);
-define('SMF_LANG_VERSION', '2.1 RC1');
 define('SMF_SOFTWARE_YEAR', '2019');
+define('SMF_LANG_VERSION', '2.1 RC2');
 define('SMF_INSTALLING', 1);
 
 /**
@@ -93,8 +93,8 @@ $upcontext['steps'] = array(
 	1 => array(2, 'upgrade_step_options', 'UpgradeOptions', 2),
 	2 => array(3, 'upgrade_step_backup', 'BackupDatabase', 10),
 	3 => array(4, 'upgrade_step_database', 'DatabaseChanges', 50),
-	4 => array(5, 'upgrade_step_convertutf', 'ConvertUtf8', 20),
-	5 => array(6, 'upgrade_step_convertjson', 'serialize_to_json', 10),
+	4 => array(5, 'upgrade_step_convertjson', 'serialize_to_json', 10),
+	5 => array(6, 'upgrade_step_convertutf', 'ConvertUtf8', 20),
 	6 => array(7, 'upgrade_step_delete', 'DeleteUpgrade', 1),
 );
 // Just to remember which one has files in it.
@@ -420,7 +420,6 @@ function upgradeExit($fallThrough = false)
 		$minutes = intval(($active / 60) % 60);
 		$seconds = intval($active % 60);
 
-		$totalTime = '';
 		if ($hours > 0)
 			echo "\n" . '', sprintf($txt['upgrade_completed_time_hms'], $hours, $minutes, $seconds), '' . "\n";
 		elseif ($minutes > 0)
@@ -436,7 +435,7 @@ function upgradeExit($fallThrough = false)
 // Load the list of language files, and the current language file.
 function load_lang_file()
 {
-	global $txt, $upcontext, $language;
+	global $txt, $upcontext, $language, $modSettings;
 
 	static $lang_dir = '', $detected_languages = array(), $loaded_langfile = '';
 
@@ -945,7 +944,7 @@ function WelcomeLogin()
 function checkLogin()
 {
 	global $modSettings, $upcontext, $disable_security;
-	global $smcFunc, $db_type, $support_js, $sourcedir;
+	global $smcFunc, $db_type, $support_js, $sourcedir, $txt;
 
 	// Don't bother if the security is disabled.
 	if ($disable_security)
@@ -1127,7 +1126,7 @@ function checkLogin()
 // Step 1: Do the maintenance and backup.
 function UpgradeOptions()
 {
-	global $db_prefix, $command_line, $modSettings, $is_debug, $smcFunc, $packagesdir, $tasksdir, $language, $txt;
+	global $db_prefix, $command_line, $modSettings, $is_debug, $smcFunc, $packagesdir, $tasksdir, $language, $txt, $db_port;
 	global $boarddir, $boardurl, $sourcedir, $maintenance, $cachedir, $upcontext, $db_type, $db_server, $image_proxy_enabled;
 
 	$upcontext['sub_template'] = 'upgrade_options';
@@ -1143,7 +1142,7 @@ function UpgradeOptions()
 	unset($member_columns);
 
 	// If these options are missing, we may need to migrate to a new Settings.php
-	$upcontext['migrateSettingsNeeded'] = detectSettingsFileMigrationNeeded() ? 1 : 0;
+	$upcontext['migrateSettingsNeeded'] = detectSettingsFileMigrationNeeded();
 
 	// If we've not submitted then we're done.
 	if (empty($_POST['upcont']))
@@ -1310,6 +1309,15 @@ function UpgradeOptions()
 	if (empty($cachedir) || substr($cachedir, 0, 1) == '.')
 		$changes['cachedir'] = '\'' . fixRelativePath($boarddir) . '/cache\'';
 
+	// Migrate cache settings.
+	// Accelerator setting didn't exist previously; use 'smf' file based caching as default if caching had been enabled.
+	if (!isset($GLOBALS['cache_enable']))
+		$changes += array(
+			'cache_accelerator' => !empty($modSettings['cache_enable']) ? '\'smf\'' : '\'\'',
+			'cache_enable' => !empty($modSettings['cache_enable']) ? $modSettings['cache_enable'] : 0,
+			'cache_memcached' => !empty($modSettings['cache_memcached']) ? '\'' . $modSettings['cache_memcached'] . '\'' : '\'\'',
+		);
+
 	// If they have a "host:port" setup for the host, split that into separate values
 	// You should never have a : in the hostname if you're not on MySQL, but better safe than sorry
 	if (strpos($db_server, ':') !== false && $db_type == 'mysql')
@@ -1322,16 +1330,14 @@ function UpgradeOptions()
 		if ($db_port != ini_get('mysqli.default_port'))
 			$changes['db_port'] = (int) $db_port;
 	}
-	elseif (!empty($db_port))
+
+	// If db_port is set and is the same as the default, set it to 0.
+	if (!empty($db_port))
 	{
-		// If db_port is set and is the same as the default, set it to ''
-		if ($db_type == 'mysql')
-		{
-			if ($db_port == ini_get('mysqli.default_port'))
-				$changes['db_port'] = '\'\'';
-			elseif ($db_type == 'postgresql' && $db_port == 5432)
-				$changes['db_port'] = '\'\'';
-		}
+		if ($db_type == 'mysql' && $db_port == ini_get('mysqli.default_port'))
+			$changes['db_port'] = 0;
+		elseif ($db_type == 'postgresql' && $db_port == 5432)
+			$changes['db_port'] = 0;
 	}
 
 	// Maybe we haven't had this option yet?
@@ -2017,7 +2023,7 @@ function parse_sql($filename)
 				}
 
 				// @todo Update this to a try/catch for PHP 7+, because eval() now throws an exception for parse errors instead of returning false
-				if (eval('global $db_prefix, $modSettings, $smcFunc, $txt, $upcontext; ' . $current_data) === false)
+				if (eval('global $db_prefix, $modSettings, $smcFunc, $txt, $upcontext, $db_name; ' . $current_data) === false)
 				{
 					$upcontext['error_message'] = 'Error in upgrade script ' . basename($filename) . ' on line ' . $line_number . '!' . $endl;
 					if ($command_line)
@@ -2243,7 +2249,7 @@ function protected_alter($change, $substep, $is_test = false)
 			// Found it?
 			if ($column['name'] === $change['name'])
 			{
-				$found |= 1;
+				$found |= true;
 				// Do some checks on the data if we have it set.
 				if (isset($change['col_type']))
 					$found &= $change['col_type'] === $column['type'];
@@ -2547,7 +2553,7 @@ function cmdStep0()
 	$start_time = time();
 
 	ob_end_clean();
-	ob_implicit_flush(true);
+	ob_implicit_flush(1);
 	@set_time_limit(600);
 
 	if (!isset($_SERVER['argv']))
@@ -3192,6 +3198,30 @@ function ConvertUtf8()
 	return false;
 }
 
+/**
+ * Attempts to repair corrupted serialized data strings
+ *
+ * @param string $string Serialized data that has been corrupted
+ * @return string|bool A working version of the serialized data, or the original if the repair failed
+ */
+function fix_serialized_data($string)
+{
+	// If its not broken, don't fix it.
+	if (!is_string($string) || !preg_match('/^[bidsa]:/', $string) || @safe_unserialize($string) !== false)
+		return $string;
+
+	// This bit fixes incorrect string lengths, which can happen if the character encoding was changed (e.g. conversion to UTF-8)
+	$new_string = preg_replace_callback('~\bs:(\d+):"(.*?)";(?=$|[bidsa]:|[{}]|N;)~s', function ($matches) {return 's:' . strlen($matches[2]) . ':"' . $matches[2] . '";';}, $string);
+
+	// @todo Add more possible fixes here. For example, fix incorrect array lengths, try to handle truncated strings gracefully, etc.
+
+	// Did it work?
+	if (@safe_unserialize($new_string) !== false)
+		return $new_string;
+	else
+		return $string;
+}
+
 function serialize_to_json()
 {
 	global $command_line, $smcFunc, $modSettings, $sourcedir, $upcontext, $support_js, $txt;
@@ -3201,7 +3231,7 @@ function serialize_to_json()
 	if (!empty($modSettings['json_done']))
 	{
 		if ($command_line)
-			return DeleteUpgrade();
+			return ConvertUtf8();
 		else
 			return true;
 	}
@@ -3294,6 +3324,10 @@ function serialize_to_json()
 					{
 						// Attempt to unserialize the setting
 						$temp = @safe_unserialize($modSettings[$var]);
+						// Maybe conversion to UTF-8 corrupted it
+						if ($temp === false)
+							$temp = @safe_unserialize(fix_serialized_data($modSettings[$var]));
+
 						if (!$temp && $command_line)
 							echo "\n - Failed to unserialize the '" . $var . "' setting. Skipping.";
 						elseif ($temp !== false)
@@ -3325,6 +3359,8 @@ function serialize_to_json()
 					while ($row = $smcFunc['db_fetch_assoc']($query))
 					{
 						$temp = @safe_unserialize($row['value']);
+						if ($temp === false)
+							$temp = @safe_unserialize(fix_serialized_data($row['value']));
 
 						if ($command_line)
 						{
@@ -3403,19 +3439,28 @@ function serialize_to_json()
 							{
 								$temp = @safe_unserialize($row[$col]);
 
-								if ($temp === false && $command_line)
-								{
-									echo "\nFailed to unserialize " . $row[$col] . "... Skipping\n";
-								}
-								// If unserialize failed, it's better to leave the data alone than to overwrite it with an empty JSON value
-								elseif ($temp !== false)
-								{
-									$row[$col] = json_encode($temp);
+								// Maybe we can fix the data?
+								if ($temp === false)
+									$temp = @safe_unserialize(fix_serialized_data($row[$col]));
 
-									// Build our SET string and variables array
-									$update .= (empty($update) ? '' : ', ') . $col . ' = {string:' . $col . '}';
-									$vars[$col] = $row[$col];
+								// Maybe the data is already JSON?
+								if ($temp === false)
+									$temp = smf_json_decode($row[$col], true, false);
+
+								// Oh well...
+								if ($temp === null)
+								{
+									$temp = array();
+
+									if ($command_line)
+										echo "\nFailed to unserialize " . $row[$col] . ". Setting to empty value.\n";
 								}
+
+								$row[$col] = json_encode($temp);
+
+								// Build our SET string and variables array
+								$update .= (empty($update) ? '' : ', ') . $col . ' = {string:' . $col . '}';
+								$vars[$col] = $row[$col];
 							}
 						}
 
@@ -3458,7 +3503,7 @@ function serialize_to_json()
 		$_GET['substep'] = 0;
 		// Make sure we move on!
 		if ($command_line)
-			return DeleteUpgrade();
+			return ConvertUtf8();
 
 		return true;
 	}
@@ -3568,7 +3613,7 @@ function template_chmod()
 
 	if (!empty($upcontext['chmod']['ftp_error']))
 		echo '
-			<div class="error_message red">
+			<div class="error">
 				<p>', $txt['upgrade_ftp_error'], '<p>
 				<code>', $upcontext['chmod']['ftp_error'], '</code>
 			</div>';
@@ -3671,21 +3716,17 @@ function template_upgrade_above()
 		<img id="smflogo" src="', $settings['default_theme_url'], '/images/smflogo.svg" alt="Simple Machines Forum" title="Simple Machines Forum">
 	</div>
 	<div id="wrapper">
-		<div id="upper_section">
-			<div id="inner_section">
-				<div id="inner_wrap">
-				</div>
-			</div>
-		</div>
 		<div id="content_section">
 			<div id="main_content_section">
 				<div id="main_steps">
 					<h2>', $txt['upgrade_progress'], '</h2>
-					<ul>';
+					<ul class="steps_list">';
 
 	foreach ($upcontext['steps'] as $num => $step)
 		echo '
-						<li class="', $num < $upcontext['current_step'] ? 'stepdone' : ($num == $upcontext['current_step'] ? 'stepcurrent' : 'stepwaiting'), '">', $txt['upgrade_step'], ' ', $step[0], ': ', $txt[$step[1]], '</li>';
+						<li', $num == $upcontext['current_step'] ? ' class="stepcurrent"' : '', '>
+							', $txt['upgrade_step'], ' ', $step[0], ': ', $txt[$step[1]], '
+						</li>';
 
 	echo '
 					</ul>
@@ -3724,11 +3765,9 @@ function template_upgrade_above()
 					</div>';
 	echo '
 				</div><!-- #install_progress -->
-			</div><!-- #main_content_section -->
-		</div><!-- #content_section -->
-		<div id="main_screen" class="clear">
-			<h2>', $upcontext['page_title'], '</h2>
-			<div class="panel">';
+				<div id="main_screen" class="clear">
+					<h2>', $upcontext['page_title'], '</h2>
+					<div class="panel">';
 }
 
 function template_upgrade_below()
@@ -3737,35 +3776,37 @@ function template_upgrade_below()
 
 	if (!empty($upcontext['pause']))
 		echo '
-					<em>', $txt['upgrade_incomplete'], '.</em><br>
+							<em>', $txt['upgrade_incomplete'], '.</em><br>
 
-					<h2 style="margin-top: 2ex;">', $txt['upgrade_not_quite_done'], '</h2>
-					<h3>
-						', $txt['upgrade_paused_overload'], '
-					</h3>';
+							<h2 style="margin-top: 2ex;">', $txt['upgrade_not_quite_done'], '</h2>
+							<h3>
+								', $txt['upgrade_paused_overload'], '
+							</h3>';
 
 	if (!empty($upcontext['custom_warning']))
 		echo '
-					<div class="errorbox">
-						<h3>', $txt['upgrade_note'], '</h3>
-						', $upcontext['custom_warning'], '
-					</div>';
+							<div class="errorbox">
+								<h3>', $txt['upgrade_note'], '</h3>
+								', $upcontext['custom_warning'], '
+							</div>';
 
 	echo '
-					<div class="righttext" style="margin: 1ex;">';
+							<div class="righttext buttons">';
 
 	if (!empty($upcontext['continue']))
 		echo '
-						<input type="submit" id="contbutt" name="contbutt" value="', $txt['upgrade_continue'], '"', $upcontext['continue'] == 2 ? ' disabled' : '', ' class="button">';
+								<input type="submit" id="contbutt" name="contbutt" value="', $txt['upgrade_continue'], '"', $upcontext['continue'] == 2 ? ' disabled' : '', ' class="button">';
 	if (!empty($upcontext['skip']))
 		echo '
-						<input type="submit" id="skip" name="skip" value="', $txt['upgrade_skip'], '" onclick="dontSubmit = true; document.getElementById(\'contbutt\').disabled = \'disabled\'; return true;" class="button">';
+								<input type="submit" id="skip" name="skip" value="', $txt['upgrade_skip'], '" onclick="dontSubmit = true; document.getElementById(\'contbutt\').disabled = \'disabled\'; return true;" class="button">';
 
 	echo '
-					</div>
-				</form>
-			</div><!-- .panel -->
-		</div><!-- #main_screen -->
+							</div>
+						</form>
+					</div><!-- .panel -->
+				</div><!-- #main_screen -->
+			</div><!-- #main_content_section -->
+		</div><!-- #content_section -->
 	</div><!-- #wrapper -->
 	</div><!-- #footerfix -->
 	<div id="footer">
@@ -3827,7 +3868,7 @@ function template_error_message()
 	global $upcontext;
 
 	echo '
-	<div class="error_message red">
+	<div class="error">
 		', $upcontext['error_msg'], '
 		<br>
 		<a href="', $_SERVER['PHP_SELF'], '">Click here to try again.</a>
@@ -4587,7 +4628,7 @@ function template_convert_utf8()
 	// If we dropped their index, let's let them know
 	if ($upcontext['dropping_index'])
 		echo '
-					<p id="indexmsg" class="', $upcontext['cur_table_num'] == $upcontext['table_count'] ? 'inline_block' : 'hidden', ' style="font-weight: bold; font-style: italic">', $txt['upgrade_fulltext'], '</p>';
+					<p id="indexmsg" class="', $upcontext['cur_table_num'] == $upcontext['table_count'] ? 'inline_block' : 'hidden', '>', $txt['upgrade_fulltext'], '</p>';
 
 	// Completion notification
 	echo '
@@ -4844,21 +4885,21 @@ function MySQLConvertOldIp($targetTable, $oldCol, $newCol, $limit = 50000, $setS
 	}
 	$smcFunc['db_free_result']($request);
 
-	//mysql default max length is 1mb https://dev.mysql.com/doc/refman/5.1/en/packet-too-large.html
-	$arIp = array();
-
 	$is_done = false;
 	while (!$is_done)
 	{
 		// Keep looping at the current step.
 		nextSubstep($current_substep);
 
+		// mysql default max length is 1mb https://dev.mysql.com/doc/refman/5.1/en/packet-too-large.html
 		$arIp = array();
 
 		$request = $smcFunc['db_query']('', '
 			SELECT DISTINCT {raw:old_col}
 			FROM {db_prefix}{raw:table_name}
-			WHERE {raw:new_col} IS NULL
+			WHERE {raw:new_col} IS NULL AND
+				{raw:old_col} != {string:unknown} AND
+				{raw:old_col} != {string:empty}
 			LIMIT {int:limit}',
 			array(
 				'old_col' => $oldCol,
@@ -4866,6 +4907,7 @@ function MySQLConvertOldIp($targetTable, $oldCol, $newCol, $limit = 50000, $setS
 				'table_name' => $targetTable,
 				'empty' => '',
 				'limit' => $limit,
+				'unknown' => 'unknown',
 			)
 		);
 		while ($row = $smcFunc['db_fetch_assoc']($request))
@@ -4992,7 +5034,7 @@ function upgradeGetColumnInfo($targetTable, $column)
  */
 function migrateSettingsFile($changes)
 {
-	global $boarddir, $cachedir;
+	global $boarddir, $cachedir, $txt;
 
 	// Try to find all of these settings.
 	$settingsVars = array(
@@ -5005,6 +5047,7 @@ function migrateSettingsFile($changes)
 		'webmaster_email' => 'string',
 		'cookiename' => 'string',
 		'db_type' => 'string',
+		'db_port' => 'int',
 		'db_server' => 'string_fatal',
 		'db_name' => 'string_fatal',
 		'db_user' => 'string_fatal',
@@ -5040,7 +5083,7 @@ function migrateSettingsFile($changes)
 		' *',
 		' * @package SMF',
 		' * @author Simple Machines http://www.simplemachines.org',
-		' * @copyright ' . date('Y', time()) . ' Simple Machines and individual contributors',
+		' * @copyright ' . SMF_SOFTWARE_YEAR . ' Simple Machines and individual contributors',
 		' * @license http://www.simplemachines.org/about/smf/license.php BSD',
 		' *',
 		' * @version ' . SMF_VERSION,
@@ -5102,6 +5145,12 @@ function migrateSettingsFile($changes)
 		' * @var string',
 		' */',
 		'$db_type = \'mysql\';',
+		'/**',
+		' * The database port',
+		' * 0 to use default port for the database type',
+		' * @var int',
+		' */',
+		'$db_port = 0;',
 		'/**',
 		' * The server to connect to (or a Unix socket)',
 		' * @var string',
@@ -5258,7 +5307,7 @@ function migrateSettingsFile($changes)
 
 		// Find the setting.
 		if ($setType == 'string' || $setType == 'string_fatal')
-			$original[$setVar] = isset($$setVar) ? '\'' . addslashes($$setVar) . '\'' : (strpos('fatal', $setType) ? null : '\'\'');
+			$original[$setVar] = isset($$setVar) ? '\'' . addcslashes($$setVar, '\'\\') . '\'' : (strpos('fatal', $setType) ? null : '\'\'');
 		elseif ($setType == 'int' || $setType == 'int_fatal')
 			$original[$setVar] = isset($$setVar) ? (int) $$setVar : (strpos('fatal', $setType) ? null : 0);
 		elseif ($setType == 'bool' || $setType == 'bool_fatal')
@@ -5289,7 +5338,7 @@ function migrateSettingsFile($changes)
 	// When was Settings.php last changed?
 	$last_settings_change = filemtime($boarddir . '/Settings.php');
 
-	// remove any /r's that made there way in here
+	// remove any \r's that made their way in here
 	foreach ($settingsArray as $k => $dummy)
 		$settingsArray[$k] = strtr($dummy, array("\r" => '')) . "\n";
 
@@ -5358,7 +5407,7 @@ function migrateSettingsFile($changes)
 		$cachedir = $boarddir . '/cache';
 
 	$test_fp = @fopen($cachedir . '/settings_update.tmp', "w+");
-	if ($test_fp)
+	if ($test_fp !== false)
 	{
 		fclose($test_fp);
 		$written_bytes = file_put_contents($cachedir . '/settings_update.tmp', 'test', LOCK_EX);
@@ -5405,9 +5454,8 @@ function migrateSettingsFile($changes)
  *
  * @param array $config_vars An array of one or more variables to update
  *
- * @return void We either successfully update the Settings file, or throw a error here.
+ * @return bool We either successfully update the Settings file, or throw a error here.
  */
-
 function detectSettingsFileMigrationNeeded()
 {
 	global $boarddir, $packagesdir, $tasksdir, $db_server, $db_type, $image_proxy_enabled, $db_show_debug;

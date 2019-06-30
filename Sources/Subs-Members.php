@@ -10,7 +10,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -34,7 +34,7 @@ if (!defined('SMF'))
  */
 function deleteMembers($users, $check_not_admin = false)
 {
-	global $sourcedir, $modSettings, $user_info, $smcFunc;
+	global $sourcedir, $modSettings, $user_info, $smcFunc, $cache_enable;
 
 	// Try give us a while to sort this out...
 	@set_time_limit(600);
@@ -124,7 +124,7 @@ function deleteMembers($users, $check_not_admin = false)
 		);
 
 		// Remove any cached data if enabled.
-		if (!empty($modSettings['cache_enable']) && $modSettings['cache_enable'] >= 2)
+		if (!empty($cache_enable) && $cache_enable >= 2)
 			cache_put_data('user_settings-' . $user[0], null, 60);
 	}
 
@@ -465,6 +465,9 @@ function registerMember(&$regOptions, $return_errors = false)
 
 	// Spaces and other odd characters are evil...
 	$regOptions['username'] = trim(preg_replace('~[\t\n\r \x0B\0' . ($context['utf8'] ? '\x{A0}\x{AD}\x{2000}-\x{200F}\x{201F}\x{202F}\x{3000}\x{FEFF}' : '\x00-\x08\x0B\x0C\x0E-\x19\xA0') . ']+~' . ($context['utf8'] ? 'u' : ''), ' ', $regOptions['username']));
+
+	// Convert character encoding for non-utf8mb4 database
+	$regOptions['username'] = $smcFunc['htmlspecialchars']($regOptions['username']);
 
 	// @todo Separate the sprintf?
 	if (empty($regOptions['email']) || !filter_var($regOptions['email'], FILTER_VALIDATE_EMAIL) || strlen($regOptions['email']) > 255)
@@ -944,7 +947,12 @@ function isReservedName($name, $current_ID_MEMBER = 0, $is_name = true, $fatal =
 	}
 
 	// Okay, they passed.
-	return false;
+	$is_reserved = false;
+
+	// Maybe a mod wants to perform further checks?
+	call_integration_hook('integrate_check_name', array($checkName, &$is_reserved, $current_ID_MEMBER, $is_name));
+
+	return $is_reserved;
 }
 
 // Get a list of groups that have a given permission (on a given board).

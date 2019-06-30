@@ -10,7 +10,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -41,11 +41,11 @@ function smf_db_initiate($db_server, $db_name, $db_user, $db_passwd, &$db_prefix
 			'db_quote'                  => 'smf_db_quote',
 			'db_insert'                 => 'smf_db_insert',
 			'db_insert_id'              => 'smf_db_insert_id',
-			'db_fetch_assoc'            => 'smf_db_fetch_assoc',
-			'db_fetch_row'              => 'smf_db_fetch_row',
+			'db_fetch_assoc'            => 'pg_fetch_assoc',
+			'db_fetch_row'              => 'pg_fetch_row',
 			'db_free_result'            => 'pg_free_result',
 			'db_num_rows'               => 'pg_num_rows',
-			'db_data_seek'              => 'smf_db_data_seek',
+			'db_data_seek'              => 'pg_result_seek',
 			'db_num_fields'             => 'pg_num_fields',
 			'db_escape_string'          => 'smf_db_escape_string',
 			'db_unescape_string'        => 'stripslashes',
@@ -71,6 +71,9 @@ function smf_db_initiate($db_server, $db_name, $db_user, $db_passwd, &$db_prefix
 	// We are not going to make it very far without these.
 	if (!function_exists('pg_pconnect'))
 		display_db_error();
+
+	// We need to escape ' and \
+	$db_passwd = str_replace(array('\\','\''), array('\\\\','\\\''), $db_passwd);
 
 	if (!empty($db_options['persist']))
 		$connection = @pg_pconnect((empty($db_server) ? '' : 'host=' . $db_server . ' ') . 'dbname=' . $db_name . ' user=\'' . $db_user . '\' password=\'' . $db_passwd . '\'' . (empty($db_options['port']) ? '' : ' port=\'' . $db_options['port'] . '\''));
@@ -619,73 +622,13 @@ function smf_db_error($db_string, $connection = null)
 }
 
 /**
- * A PostgreSQL specific function for tracking the current row...
- *
- * @param resource $request A PostgreSQL result resource
- * @param bool|int $counter The row number in the result to fetch (false to fetch the next one)
- * @return array The contents of the row that was fetched
- */
-function smf_db_fetch_row($request, $counter = false)
-{
-	global $db_row_count;
-
-	if ($counter !== false)
-		return pg_fetch_row($request, $counter);
-
-	// Reset the row counter...
-	if (!isset($db_row_count[(int) $request]))
-		$db_row_count[(int) $request] = 0;
-
-	// Return the right row.
-	return @pg_fetch_row($request, $db_row_count[(int) $request]++);
-}
-
-/**
- * Get an associative array
- *
- * @param resource $request A PostgreSQL result resource
- * @param int|bool $counter The row to get. If false, returns the next row.
- * @return array An associative array of row contents
- */
-function smf_db_fetch_assoc($request, $counter = false)
-{
-	global $db_row_count;
-
-	if ($counter !== false)
-		return pg_fetch_assoc($request, $counter);
-
-	// Reset the row counter...
-	if (!isset($db_row_count[(int) $request]))
-		$db_row_count[(int) $request] = 0;
-
-	// Return the right row.
-	return @pg_fetch_assoc($request, $db_row_count[(int) $request]++);
-}
-
-/**
- * Reset the pointer...
- *
- * @param resource $request A PostgreSQL result resource
- * @param int $counter The counter
- * @return bool Always returns true
- */
-function smf_db_data_seek($request, $counter)
-{
-	global $db_row_count;
-
-	$db_row_count[(int) $request] = $counter;
-
-	return true;
-}
-
-/**
  * Inserts data into a table
  *
  * @param string $method The insert method - can be 'replace', 'ignore' or 'insert'
  * @param string $table The table we're inserting the data into
  * @param array $columns An array of the columns we're inserting the data into. Should contain 'column' => 'datatype' pairs
  * @param array $data The data to insert
- * @param array $keys The keys for the table
+ * @param array $keys The keys for the table, needs to be not empty on replace mode
  * @param int returnmode 0 = nothing(default), 1 = last row id, 2 = all rows id as array; every mode runs only with method != 'ignore'
  * @param resource $connection The connection to use (if null, $db_connection is used)
  * @return mixed value of the first key, behavior based on returnmode. null if no data.
@@ -708,9 +651,15 @@ function smf_db_insert($method = 'replace', $table, $columns, $data, $keys, $ret
 	$table = str_replace('{db_prefix}', $db_prefix, $table);
 
 	// Sanity check for replace is key part of the columns array
-	if ($method == 'replace' && count(array_intersect_key($columns, array_flip($keys))) !== count($keys))
-		smf_db_error_backtrace('Primary Key field missing in insert call',
-			'Change the method of db insert to insert or add the pk field to the columns array', E_USER_ERROR, __FILE__, __LINE__);
+	if ($method == 'replace')
+	{
+		if (empty($keys))
+			smf_db_error_backtrace('When using the replace mode, the key column is a required entry.',
+				'Change the method of db insert to insert or add the pk field to the key array', E_USER_ERROR, __FILE__, __LINE__);
+		if (count(array_intersect_key($columns, array_flip($keys))) !== count($keys))
+			smf_db_error_backtrace('Primary Key field missing in insert call',
+				'Change the method of db insert to insert or add the pk field to the columns array', E_USER_ERROR, __FILE__, __LINE__);
+	}			
 
 	// PostgreSQL doesn't support replace: we implement a MySQL-compatible behavior instead
 	if ($method == 'replace' || $method == 'ignore')
@@ -957,7 +906,8 @@ function smf_db_escape_wildcard_string($string, $translate_human_wildcards = fal
 function smf_db_fetch_all($request)
 {
 	// Return the right row.
-	return @pg_fetch_all($request);
+	$return = @pg_fetch_all($request);
+	return !empty($return) ? $return : array();
 }
 
 /**

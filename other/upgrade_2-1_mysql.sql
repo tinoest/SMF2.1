@@ -631,61 +631,60 @@ VALUES
 ---#
 
 /******************************************************************************/
---- Updating board access rules
+--- Removing manage_boards permission from anyone who shouldn't have it
 /******************************************************************************/
----# Updating board access rules
+---# Removing manage_boards permission
 ---{
-$member_groups = array(
-	'allowed' => array(),
-	'denied' => array(),
-);
-
-$request = $smcFunc['db_query']('', '
-	SELECT id_group, add_deny
-	FROM {db_prefix}permissions
-	WHERE permission = {string:permission}',
-	array(
-		'permission' => 'manage_boards',
-	)
-);
-while ($row = $smcFunc['db_fetch_assoc']($request))
-	$member_groups[$row['add_deny'] === '1' ? 'allowed' : 'denied'][] = $row['id_group'];
-$smcFunc['db_free_result']($request);
-
-$member_groups = array_diff($member_groups['allowed'], $member_groups['denied']);
-
-if (!empty($member_groups))
+if (version_compare(@$modSettings['smfVersion'], '2.1', '<'))
 {
-	$count = count($member_groups);
-	$changes = array();
+	$board_managers = array();
 
 	$request = $smcFunc['db_query']('', '
-		SELECT id_board, member_groups
-		FROM {db_prefix}boards'
+		SELECT id_group
+		FROM {db_prefix}permissions
+		WHERE permission = {string:permission}',
+		array(
+			'permission' => 'manage_boards',
+		)
 	);
-	while ($row = $smcFunc['db_fetch_assoc']($request))
+	if ($smcFunc['db_num_rows']($request) != 0)
 	{
-		$current_groups = explode(',', $row['member_groups']);
-		if (count(array_intersect($current_groups, $member_groups)) != $count)
-		{
-			$new_groups = array_unique(array_merge($current_groups, $member_groups));
-			$changes[$row['id_board']] = implode(',', $new_groups);
-		}
+		while ($row = $smcFunc['db_fetch_assoc']($request))
+			$board_managers[$row['id_group']] = 0;
 	}
 	$smcFunc['db_free_result']($request);
 
-	if (!empty($changes))
+	$request = $smcFunc['db_query']('', '
+		SELECT member_groups
+		FROM {db_prefix}boards',
+		array()
+	);
+	$num_boards = $smcFunc['db_num_rows']($request);
+	while ($row = $smcFunc['db_fetch_assoc']($request))
 	{
-		foreach ($changes as $id_board => $member_groups)
-			$smcFunc['db_query']('', '
-				UPDATE {db_prefix}boards
-				SET member_groups = {string:member_groups}
-				WHERE id_board = {int:id_board}',
-				array(
-					'member_groups' => $member_groups,
-					'id_board' => $id_board,
-				)
-			);
+		$groups = explode(',', $row['member_groups']);
+		foreach ($groups as $group)
+			if (array_key_exists($group, $board_managers))
+				++$board_managers[$group];
+	}
+	$smcFunc['db_free_result']($request);
+
+	$ex_board_managers = array();
+	foreach ($board_managers as $id_group => $board_count)
+		if ($board_count < $num_boards)
+			$ex_board_managers[] = $id_group;
+
+	if (!empty($ex_board_managers))
+	{
+		$smcFunc['db_query']('', '
+			DELETE FROM {db_prefix}permissions
+			WHERE permission = {string:permission}
+				AND id_group IN ({array_int:ex_board_managers})',
+			array(
+				'permission' => 'manage_boards',
+				'ex_board_managers' => $ex_board_managers,
+			)
+		);
 	}
 }
 ---}
@@ -829,17 +828,43 @@ ALTER TABLE {$db_prefix}members
 	DROP notify_announcements;
 ---#
 
+---# Updating obsolete alerts from before RC3
+UPDATE {$db_prefix}user_alerts
+SET content_type = 'member', content_id = id_member_started
+WHERE content_type = 'buddy';
+
+UPDATE {$db_prefix}user_alerts
+SET content_type = 'member'
+WHERE content_type = 'profile';
+
+UPDATE {$db_prefix}user_alerts
+SET content_id = id_member_started
+WHERE content_type = 'member' AND content_action LIKE 'register_%';
+
+UPDATE {$db_prefix}user_alerts
+SET content_type = 'topic', content_action = 'unapproved_topic'
+WHERE content_type = 'unapproved' AND content_action = 'topic';
+
+UPDATE {$db_prefix}user_alerts
+SET content_type = 'topic', content_action = 'unapproved_reply'
+WHERE content_type = 'unapproved' AND content_action = 'reply';
+
+UPDATE {$db_prefix}user_alerts
+SET content_type = 'topic', content_action = 'unapproved_post'
+WHERE content_type = 'unapproved' AND content_action = 'post';
+
+UPDATE {$db_prefix}user_alerts AS a
+JOIN {$db_prefix}attachments AS f ON (f.id_attach = a.content_id)
+SET a.content_type = 'msg', a.content_action = 'unapproved_attachment', a.content_id = f.id_msg
+WHERE content_type = 'unapproved' AND content_action = 'attachment';
+---#
+
 /******************************************************************************/
 --- Adding support for topic unwatch
 /******************************************************************************/
 ---# Adding new column to log_topics...
 ALTER TABLE {$db_prefix}log_topics
-ADD COLUMN unwatched TINYINT NOT NULL DEFAULT '0';
----#
-
----# Initializing new column in log_topics...
-UPDATE {$db_prefix}log_topics
-SET unwatched = 0;
+ADD COLUMN unwatched TINYINT NOT NULL DEFAULT 0;
 ---#
 
 ---# Fixing column name change...
@@ -892,12 +917,6 @@ SET id_theme = 0;
 
 UPDATE {$db_prefix}members
 SET id_theme = 0;
----#
-
----# Update the max year for the calendar
-UPDATE {$db_prefix}settings
-SET value = '2030'
-WHERE variable = 'cal_maxyear';
 ---#
 
 /******************************************************************************/
@@ -1383,7 +1402,7 @@ WHERE variable = 'avatar_action_too_large'
 
 ---# Cleaning up old settings.
 DELETE FROM {$db_prefix}settings
-WHERE variable IN ('enableStickyTopics', 'guest_hideContacts', 'notify_new_registration', 'attachmentEncryptFilenames', 'hotTopicPosts', 'hotTopicVeryPosts', 'fixLongWords', 'admin_features', 'topbottomEnable', 'simpleSearch', 'enableVBStyleLogin', 'admin_bbc', 'enable_unwatch');
+WHERE variable IN ('enableStickyTopics', 'guest_hideContacts', 'notify_new_registration', 'attachmentEncryptFilenames', 'hotTopicPosts', 'hotTopicVeryPosts', 'fixLongWords', 'admin_feature', 'log_ban_hits', 'topbottomEnable', 'simpleSearch', 'enableVBStyleLogin', 'admin_bbc', 'enable_unwatch', 'cache_memcached', 'cache_enable');
 ---#
 
 ---# Cleaning up old theme settings.
@@ -2172,7 +2191,7 @@ if (stripos($column_info['type'], 'varbinary') !== false)
 	$doChange = false;
 
 if ($doChange)
-	upgrade_query("ALTER TABLE {$db_prefix}messages CHANGE poster_ip poster_ip_old varchar(200);");
+	upgrade_query("ALTER TABLE {$db_prefix}messages CHANGE poster_ip poster_ip_old varchar(255);");
 ---}
 ---#
 
@@ -2183,7 +2202,7 @@ ALTER TABLE {$db_prefix}messages ADD COLUMN poster_ip VARBINARY(16);
 ---# Create an ip index for old ips
 ---{
 $doChange = true;
-$results = $smcFunc['db_list_columns']('{db_prefix}members');
+$results = $smcFunc['db_list_columns']('{db_prefix}messages');
 if (!in_array('member_ip_old', $results))
 	$doChange = false;
 
@@ -2357,6 +2376,27 @@ ADD COLUMN location VARCHAR(255) NOT NULL DEFAULT '';
 ---#
 
 /******************************************************************************/
+--- Updating various calendar settings
+/******************************************************************************/
+---# Update the max year for the calendar
+UPDATE {$db_prefix}settings
+SET value = '2030'
+WHERE variable = 'cal_maxyear';
+---#
+
+---# Adding various calendar settings
+INSERT INTO {$db_prefix}settings
+	(variable, value)
+VALUES
+	('cal_disable_prev_next', '0'),
+	('cal_week_links', '2'),
+	('cal_prev_next_links', '1'),
+	('cal_short_days', '0'),
+	('cal_short_months', '0'),
+	('cal_week_numbers', '0');
+---#
+
+/******************************************************************************/
 --- Cleaning up after old UTF-8 languages
 /******************************************************************************/
 ---# Update the members' languages
@@ -2406,7 +2446,7 @@ MODIFY COLUMN new_pm TINYINT UNSIGNED NOT NULL DEFAULT '0';
 
 ---# Updating members pm_ignore_list
 ALTER TABLE {$db_prefix}members
-MODIFY COLUMN pm_ignore_list VARCHAR(255) NOT NULL DEFAULT '';
+MODIFY COLUMN pm_ignore_list TEXT NULL;
 ---#
 
 ---# Updating member_logins id_member
@@ -2931,3 +2971,67 @@ VALUES ('Independence Day', '1004-07-04'),
 CREATE INDEX idx_id_thumb ON {$db_prefix}attachments (id_thumb);
 ---#
 
+/******************************************************************************/
+--- Fix mods columns
+/******************************************************************************/
+---# make members mod col nullable
+---{
+$request = upgrade_query("
+		SELECT COLUMN_NAME, COLUMN_TYPE
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = '" . $db_name . "' AND  TABLE_NAME = '" . $db_prefix . "members' AND
+			COLUMN_DEFAULT IS NULL AND COLUMN_KEY <> 'PRI' AND IS_NULLABLE = 'NO' AND
+			COLUMN_NAME NOT IN ('buddy_list', 'signature', 'ignore_boards')
+	");
+
+
+while ($row = $smcFunc['db_fetch_assoc']($request))
+{
+		upgrade_query("
+			ALTER TABLE {$db_prefix}members
+			MODIFY " . $row['COLUMN_NAME'] . " " . $row['COLUMN_TYPE'] . " NULL
+		");
+}
+---}
+---#
+
+---# make boards mod col nullable
+---{
+$request = upgrade_query("
+		SELECT COLUMN_NAME, COLUMN_TYPE
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = '" . $db_name . "' AND  TABLE_NAME = '" . $db_prefix . "boards' AND
+			COLUMN_DEFAULT IS NULL AND COLUMN_KEY <> 'PRI' AND IS_NULLABLE = 'NO' AND
+			COLUMN_NAME NOT IN ('description')
+	");
+
+
+while ($row = $smcFunc['db_fetch_assoc']($request))
+{
+		upgrade_query("
+			ALTER TABLE {$db_prefix}boards
+			MODIFY " . $row['COLUMN_NAME'] . " " . $row['COLUMN_TYPE'] . " NULL
+		");
+}
+---}
+---#
+
+---# make topics mod col nullable
+---{
+$request = upgrade_query("
+		SELECT COLUMN_NAME, COLUMN_TYPE
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_SCHEMA = '" . $db_name . "' AND  TABLE_NAME = '" . $db_prefix . "topics' AND
+			COLUMN_DEFAULT IS NULL AND COLUMN_KEY <> 'PRI' AND IS_NULLABLE = 'NO'
+	");
+
+
+while ($row = $smcFunc['db_fetch_assoc']($request))
+{
+		upgrade_query("
+			ALTER TABLE {$db_prefix}topics
+			MODIFY " . $row['COLUMN_NAME'] . " " . $row['COLUMN_TYPE'] . " NULL
+		");
+}
+---}
+---#

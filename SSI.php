@@ -8,7 +8,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 // Don't do anything if SMF is already loaded.
@@ -16,7 +16,7 @@ if (defined('SMF'))
 	return true;
 
 define('SMF', 'SSI');
-define('SMF_VERSION', '2.1 RC1');
+define('SMF_VERSION', '2.1 RC2');
 define('SMF_FULL_VERSION', 'SMF ' . SMF_VERSION);
 define('SMF_SOFTWARE_YEAR', '2019');
 
@@ -468,17 +468,19 @@ function ssi_queryPosts($query_where = '', $query_where_params = array(), $query
 	$request = $smcFunc['db_query']('substring', '
 		SELECT
 			m.poster_time, m.subject, m.id_topic, m.id_member, m.id_msg, m.id_board, m.likes, b.name AS board_name,
-			IFNULL(mem.real_name, m.poster_name) AS poster_name, ' . ($user_info['is_guest'] ? '1 AS is_read, 0 AS new_from' : '
-			IFNULL(lt.id_msg, IFNULL(lmr.id_msg, 0)) >= m.id_msg_modified AS is_read,
-			IFNULL(lt.id_msg, IFNULL(lmr.id_msg, -1)) + 1 AS new_from') . ', ' . ($limit_body ? 'SUBSTRING(m.body, 1, 384) AS body' : 'm.body') . ', m.smileys_enabled
+			COALESCE(mem.real_name, m.poster_name) AS poster_name, ' . ($user_info['is_guest'] ? '1 AS is_read, 0 AS new_from' : '
+			COALESCE(lt.id_msg, lmr.id_msg, 0) >= m.id_msg_modified AS is_read,
+			COALESCE(lt.id_msg, lmr.id_msg, -1) + 1 AS new_from') . ', ' . ($limit_body ? 'SUBSTRING(m.body, 1, 384) AS body' : 'm.body') . ', m.smileys_enabled
 		FROM {db_prefix}messages AS m
-			INNER JOIN {db_prefix}boards AS b ON (b.id_board = m.id_board)
+			INNER JOIN {db_prefix}boards AS b ON (b.id_board = m.id_board)' . ($modSettings['postmod_active'] ? '
+			INNER JOIN {db_prefix}topics AS t ON (t.id_topic = m.id_topic)' : '') . '
 			LEFT JOIN {db_prefix}members AS mem ON (mem.id_member = m.id_member)' . (!$user_info['is_guest'] ? '
 			LEFT JOIN {db_prefix}log_topics AS lt ON (lt.id_topic = m.id_topic AND lt.id_member = {int:current_member})
 			LEFT JOIN {db_prefix}log_mark_read AS lmr ON (lmr.id_board = m.id_board AND lmr.id_member = {int:current_member})' : '') . '
 		WHERE 1=1 ' . ($override_permissions ? '' : '
 			AND {query_wanna_see_board}') . ($modSettings['postmod_active'] ? '
-			AND m.approved = {int:is_approved}' : '') . '
+			AND m.approved = {int:is_approved}
+			AND t.approved = {int:is_approved}' : '') . '
 		' . (empty($query_where) ? '' : 'AND ' . $query_where) . '
 		ORDER BY ' . $query_order . '
 		' . ($query_limit == '' ? '' : 'LIMIT ' . $query_limit),
@@ -636,9 +638,9 @@ function ssi_recentTopics($num_recent = 8, $exclude_boards = null, $include_boar
 	$request = $smcFunc['db_query']('substring', '
 		SELECT
 			mf.poster_time, mf.subject, ml.id_topic, mf.id_member, ml.id_msg, t.num_replies, t.num_views, mg.online_color, t.id_last_msg,
-			IFNULL(mem.real_name, mf.poster_name) AS poster_name, ' . ($user_info['is_guest'] ? '1 AS is_read, 0 AS new_from' : '
-			IFNULL(lt.id_msg, IFNULL(lmr.id_msg, 0)) >= ml.id_msg_modified AS is_read,
-			IFNULL(lt.id_msg, IFNULL(lmr.id_msg, -1)) + 1 AS new_from') . ', SUBSTRING(mf.body, 1, 384) AS body, mf.smileys_enabled, mf.icon
+			COALESCE(mem.real_name, mf.poster_name) AS poster_name, ' . ($user_info['is_guest'] ? '1 AS is_read, 0 AS new_from' : '
+			COALESCE(lt.id_msg, lmr.id_msg, 0) >= ml.id_msg_modified AS is_read,
+			COALESCE(lt.id_msg, lmr.id_msg, -1) + 1 AS new_from') . ', SUBSTRING(mf.body, 1, 384) AS body, mf.smileys_enabled, mf.icon
 		FROM {db_prefix}topics AS t
 			INNER JOIN {db_prefix}messages AS ml ON (ml.id_msg = t.id_last_msg)
 			INNER JOIN {db_prefix}messages AS mf ON (mf.id_msg = t.id_last_msg)
@@ -795,7 +797,7 @@ function ssi_topBoards($num_top = 10, $output_method = 'echo')
 	$request = $smcFunc['db_query']('', '
 		SELECT
 			b.name, b.num_topics, b.num_posts, b.id_board,' . (!$user_info['is_guest'] ? ' 1 AS is_read' : '
-			(IFNULL(lb.id_msg, 0) >= b.id_last_msg) AS is_read') . '
+			(COALESCE(lb.id_msg, 0) >= b.id_last_msg) AS is_read') . '
 		FROM {db_prefix}boards AS b
 			LEFT JOIN {db_prefix}log_boards AS lb ON (lb.id_board = b.id_board AND lb.id_member = {int:current_member})
 		WHERE {query_wanna_see_board}' . (!empty($modSettings['recycle_enable']) && $modSettings['recycle_board'] > 0 ? '
@@ -1711,7 +1713,7 @@ function ssi_pollVote()
 		SELECT
 			p.id_poll, p.voting_locked, p.expire_time, p.max_votes, p.guest_vote,
 			t.id_topic,
-			IFNULL(lp.id_choice, -1) AS selected
+			COALESCE(lp.id_choice, -1) AS selected
 		FROM {db_prefix}polls AS p
 			INNER JOIN {db_prefix}topics AS t ON (t.id_poll = {int:current_poll})
 			INNER JOIN {db_prefix}boards AS b ON (b.id_board = t.id_board)
@@ -2078,7 +2080,7 @@ function ssi_boardNews($board = null, $limit = null, $start = null, $length = nu
 	// Find the posts.
 	$request = $smcFunc['db_query']('', '
 		SELECT
-			m.icon, m.subject, m.body, IFNULL(mem.real_name, m.poster_name) AS poster_name, m.poster_time, m.likes,
+			m.icon, m.subject, m.body, COALESCE(mem.real_name, m.poster_name) AS poster_name, m.poster_time, m.likes,
 			t.num_replies, t.id_topic, m.id_member, m.smileys_enabled, m.id_msg, t.locked, t.id_last_msg, m.id_board
 		FROM {db_prefix}topics AS t
 			INNER JOIN {db_prefix}messages AS m ON (m.id_msg = t.id_first_msg)
@@ -2191,7 +2193,7 @@ function ssi_boardNews($board = null, $limit = null, $start = null, $length = nu
 			if (!empty($news['likes']['can_like']))
 			{
 				echo '
-						<li class="like_button" id="msg_', $news['message_id'], '_likes"><a href="', $scripturl, '?action=likes;ltype=msg;sa=like;like=', $news['message_id'], ';', $context['session_var'], '=', $context['session_id'], '" class="msg_like"><span class="', $news['likes']['you'] ? 'unlike' : 'like', '"></span>', $news['likes']['you'] ? $txt['unlike'] : $txt['like'], '</a></li>';
+						<li class="smflikebutton" id="msg_', $news['message_id'], '_likes"><a href="', $scripturl, '?action=likes;ltype=msg;sa=like;like=', $news['message_id'], ';', $context['session_var'], '=', $context['session_id'], '" class="msg_like"><span class="', $news['likes']['you'] ? 'unlike' : 'like', '"></span>', $news['likes']['you'] ? $txt['unlike'] : $txt['like'], '</a></li>';
 			}
 
 			if (!empty($news['likes']['count']))
@@ -2381,9 +2383,9 @@ function ssi_recentAttachments($num_attachments = 10, $attachment_ext = array(),
 	// Lets build the query.
 	$request = $smcFunc['db_query']('', '
 		SELECT
-			att.id_attach, att.id_msg, att.filename, IFNULL(att.size, 0) AS filesize, att.downloads, mem.id_member,
-			IFNULL(mem.real_name, m.poster_name) AS poster_name, m.id_topic, m.subject, t.id_board, m.poster_time,
-			att.width, att.height' . (empty($modSettings['attachmentShowImages']) || empty($modSettings['attachmentThumbnails']) ? '' : ', IFNULL(thumb.id_attach, 0) AS id_thumb, thumb.width AS thumb_width, thumb.height AS thumb_height') . '
+			att.id_attach, att.id_msg, att.filename, COALESCE(att.size, 0) AS filesize, att.downloads, mem.id_member,
+			COALESCE(mem.real_name, m.poster_name) AS poster_name, m.id_topic, m.subject, t.id_board, m.poster_time,
+			att.width, att.height' . (empty($modSettings['attachmentShowImages']) || empty($modSettings['attachmentThumbnails']) ? '' : ', COALESCE(thumb.id_attach, 0) AS id_thumb, thumb.width AS thumb_width, thumb.height AS thumb_height') . '
 		FROM {db_prefix}attachments AS att
 			INNER JOIN {db_prefix}messages AS m ON (m.id_msg = att.id_msg)
 			INNER JOIN {db_prefix}topics AS t ON (t.id_topic = m.id_topic)

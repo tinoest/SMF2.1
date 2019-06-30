@@ -11,7 +11,7 @@
  * @copyright 2019 Simple Machines and individual contributors
  * @license http://www.simplemachines.org/about/smf/license.php BSD
  *
- * @version 2.1 RC1
+ * @version 2.1 RC2
  */
 
 if (!defined('SMF'))
@@ -131,8 +131,8 @@ function getBoardIndex($boardIndexOptions)
 
 	// Children can affect parents, so we need to gather all the boards first and then process them after.
 	$row_boards = array();
-	while ($row_board = $smcFunc['db_fetch_assoc']($result_boards))
-		$row_boards[$row_board['id_board']] = $row_board;
+	foreach ($smcFunc['db_fetch_all']($result_boards) as $row)
+		$row_boards[$row['id_board']] = $row;
 	$smcFunc['db_free_result']($result_boards);
 
 	// Run through the categories and boards (or only boards)....
