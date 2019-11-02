@@ -170,7 +170,7 @@ class paypal_payment
 			$_POST['business'] = $_POST['receiver_email'];
 
 		// Are we testing?
-		if (empty($modSettings['paidsubs_test']) && strtolower($modSettings['paypal_sandbox_email']) != strtolower($_POST['business']) && (empty($modSettings['paypal_additional_emails']) || !in_array(strtolower($_POST['business']), explode(',', strtolower($modSettings['paypal_additional_emails'])))))
+		if (!empty($modSettings['paidsubs_test']) && strtolower($modSettings['paypal_sandbox_email']) != strtolower($_POST['business']) && (empty($modSettings['paypal_additional_emails']) || !in_array(strtolower($_POST['business']), explode(',', strtolower($modSettings['paypal_additional_emails'])))))
 			return false;
 		elseif (strtolower($modSettings['paypal_email']) != strtolower($_POST['business']) && (empty($modSettings['paypal_additional_emails']) || !in_array(strtolower($_POST['business']), explode(',', $modSettings['paypal_additional_emails']))))
 			return false;
@@ -373,7 +373,7 @@ class paypal_payment
 	}
 
 	/**
-	 * Record the transaction reference and exit
+	 * Record the transaction reference to finish up.
 	 *
 	 */
 	public function close()
@@ -393,8 +393,6 @@ class paypal_payment
 				)
 			);
 		}
-
-		exit();
 	}
 
 	/**

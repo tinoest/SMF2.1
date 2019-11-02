@@ -1406,6 +1406,7 @@ function parse_bbc($message, $smileys = true, $cache_id = '', $parse_tags = arra
 					'alt' => array('optional' => true),
 					'width' => array('optional' => true, 'match' => '(\d+)'),
 					'height' => array('optional' => true, 'match' => '(\d+)'),
+					'display' => array('optional' => true, 'match' => '(link|embed)'),
 				),
 				'content' => '$1',
 				'validate' => function(&$tag, &$data, $disabled, $params) use ($modSettings, $context, $sourcedir, $txt, $smcFunc)
@@ -1428,24 +1429,61 @@ function parse_bbc($message, $smileys = true, $cache_id = '', $parse_tags = arra
 					if (is_string($currentAttachment))
 						return $data = !empty($txt[$currentAttachment]) ? $txt[$currentAttachment] : $currentAttachment;
 
-					if (!empty($currentAttachment['is_image']) && (!isset($param['{type}']) || strpos($param['{type}'], 'image') === 0))
+					// We need a display mode.
+					if (empty($params['{display}']))
+					{
+						// Images, video, and audio are embedded by default.
+						if (!empty($currentAttachment['is_image']) || strpos($currentAttachment['mime_type'], 'video/') === 0 || strpos($currentAttachment['mime_type'], 'audio/') === 0)
+							$params['{display}'] = 'embed';
+						// Anything else shows a link by default.
+						else
+							$params['{display}'] = 'link';
+					}
+
+					// Embedded file.
+					if ($params['{display}'] == 'embed')
 					{
 						$alt = ' alt="' . (!empty($params['{alt}']) ? $params['{alt}'] : $currentAttachment['name']) . '"';
 						$title = !empty($data) ? ' title="' . $smcFunc['htmlspecialchars']($data) . '"' : '';
 
-						$width = !empty($params['{width}']) ? ' width="' . $params['{width}'] . '"' : '';
-						$height = !empty($params['{height}']) ? ' height="' . $params['{height}'] . '"' : '';
+						$width = !empty($params['{width}']) ? $params['{width}'] : (!empty($currentAttachment['width']) ? $currentAttachment['width'] : '');
+						$height = !empty($params['{height}']) ? $params['{height}'] : (!empty($currentAttachment['height']) ? $currentAttachment['height'] : '');
 
-						if (empty($width) && empty($height))
+						// Image.
+						if (!empty($currentAttachment['is_image']))
 						{
-							$width = ' width="' . $currentAttachment['width'] . '"';
-							$height = ' height="' . $currentAttachment['height'] . '"';
-						}
+							$width = !empty($width) ? ' width="' . $width . '"' : '';
+							$height = !empty($height) ? ' height="' . $height . '"' : '';
 
-						if ($currentAttachment['thumbnail']['has_thumb'] && empty($params['{width}']) && empty($params['{height}']))
-							$returnContext .= '<a href="' . $currentAttachment['href'] . ';image" id="link_' . $currentAttachment['id'] . '" onclick="' . $currentAttachment['thumbnail']['javascript'] . '"><img src="' . $currentAttachment['thumbnail']['href'] . '"' . $alt . $title . ' id="thumb_' . $currentAttachment['id'] . '" class="atc_img"></a>';
+							if ($currentAttachment['thumbnail']['has_thumb'] && empty($params['{width}']) && empty($params['{height}']))
+								$returnContext .= '<a href="' . $currentAttachment['href'] . ';image" id="link_' . $currentAttachment['id'] . '" onclick="' . $currentAttachment['thumbnail']['javascript'] . '"><img src="' . $currentAttachment['thumbnail']['href'] . '"' . $alt . $title . ' id="thumb_' . $currentAttachment['id'] . '" class="atc_img"></a>';
+							else
+								$returnContext .= '<img src="' . $currentAttachment['href'] . ';image"' . $alt . $title . $width . $height . ' class="bbc_img"/>';
+						}
+						// Video.
+						elseif (strpos($currentAttachment['mime_type'], 'video/') === 0)
+						{
+							$width = !empty($width) ? ' width="' . $width . '"' : '';
+							$height = !empty($height) ? ' height="' . $height . '"' : '';
+
+							$returnContext .= '<div class="videocontainer"><div><video controls preload="none" src="'. $currentAttachment['href'] . '" playsinline' . $width . $height . ' style="object-fit:contain;"><a href="' . $currentAttachment['href'] . '" class="bbc_link">' . $smcFunc['htmlspecialchars'](!empty($data) ? $data : $currentAttachment['name']) . '</a></video></div></div>' . (!empty($data) && $data != $currentAttachment['name'] ? '<div class="smalltext">' . $data . '</div>' : '');
+						}
+						// Audio.
+						elseif (strpos($currentAttachment['mime_type'], 'audio/') === 0)
+						{
+							$width = 'max-width:100%; width: ' . (!empty($width) ? $width : '400') . 'px;';
+							$height = !empty($height) ? 'height: ' . $height . 'px;' : '';
+
+							$returnContext .= (!empty($data) && $data != $currentAttachment['name'] ? $data . ' ' : '') . '<audio controls preload="none" src="'. $currentAttachment['href'] . '" class="bbc_audio" style="vertical-align:middle;' . $width . $height . '"><a href="' . $currentAttachment['href'] . '" class="bbc_link">' . $smcFunc['htmlspecialchars'](!empty($data) ? $data : $currentAttachment['name']) . '</a></audio>';
+						}
+						// Anything else.
 						else
-							$returnContext .= '<img src="' . $currentAttachment['href'] . ';image"' . $alt . $title . $width . $height . ' class="bbc_img"/>';
+						{
+							$width = !empty($width) ? ' width="' . $width . '"' : '';
+							$height = !empty($height) ? ' height="' . $height . '"' : '';
+
+							$returnContext .= '<object type="' . $currentAttachment['mime_type'] . '" data="' . $currentAttachment['href'] . '"' . $width . $height . ' typemustmatch><a href="' . $currentAttachment['href'] . '" class="bbc_link">' . $smcFunc['htmlspecialchars'](!empty($data) ? $data : $currentAttachment['name']) . '</a></object>';
+						}
 					}
 
 					// No image. Show a link.
@@ -6520,10 +6558,16 @@ function set_tld_regex($update = false)
 function build_regex($strings, $delim = null, $returnArray = false)
 {
 	global $smcFunc;
+	static $regexes = array();
 
 	// If it's not an array, there's not much to do. ;)
 	if (!is_array($strings))
 		return preg_quote(@strval($strings), $delim);
+
+	$regex_key = md5(json_encode(array($strings, $delim, $returnArray)));
+	
+	if (isset($regexes[$regex_key]))
+		return $regexes[$regex_key];
 
 	// The mb_* functions are faster than the $smcFunc ones, but may not be available
 	if (function_exists('mb_internal_encoding') && function_exists('mb_detect_encoding') && function_exists('mb_strlen') && function_exists('mb_substr'))
@@ -6666,6 +6710,7 @@ function build_regex($strings, $delim = null, $returnArray = false)
 	if (!empty($current_encoding))
 		mb_internal_encoding($current_encoding);
 
+	$regexes[$regex_key] = $regex;
 	return $regex;
 }
 
@@ -6980,25 +7025,25 @@ function url_to_iri($url)
  */
 function check_cron()
 {
-	global $user_info, $modSettings, $smcFunc, $txt;
+	global $modSettings, $smcFunc, $txt;
 
-	if (empty($modSettings['cron_last_checked']))
-		$modSettings['cron_last_checked'] = 0;
-
-	if (!empty($modSettings['cron_is_real_cron']) && time() - $modSettings['cron_last_checked'] > 84600)
+	if (!empty($modSettings['cron_is_real_cron']) && time() - @intval($modSettings['cron_last_checked']) > 84600)
 	{
 		$request = $smcFunc['db_query']('', '
-			SELECT time_run
-			FROM {db_prefix}log_scheduled_tasks
-			ORDER BY id_log DESC
-			LIMIT 1',
-			array()
+			SELECT COUNT(*)
+			FROM {db_prefix}scheduled_tasks
+			WHERE disabled = {int:not_disabled}
+				AND next_time < {int:yesterday}',
+			array(
+				'not_disabled' => 0,
+				'yesterday' => time() - 84600,
+			)
 		);
-		list($time_run) = $smcFunc['db_fetch_row']($request);
+		list($overdue) = $smcFunc['db_fetch_row']($request);
 		$smcFunc['db_free_result']($request);
 
-		// If it's been more than 24 hours since the last task ran, cron must not be working
-		if (!empty($time_run) && time() - $time_run > 84600)
+		// If we have tasks more than a day overdue, cron isn't doing its job.
+		if (!empty($overdue))
 		{
 			loadLanguage('ManageScheduledTasks');
 			log_error($txt['cron_not_working']);
